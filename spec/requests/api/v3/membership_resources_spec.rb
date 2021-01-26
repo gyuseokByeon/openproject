@@ -379,7 +379,9 @@ describe 'API v3 memberships resource', type: :request, content_type: :json do
       own_member
       login_as current_user
 
-      post path, body
+      perform_enqueued_jobs do
+        post path, body
+      end
     end
 
     shared_examples_for 'successful member creation' do
@@ -419,14 +421,36 @@ describe 'API v3 memberships resource', type: :request, content_type: :json do
       end
     end
 
+    shared_examples_for 'sends mails' do
+      let(:expected_receivers) { defined?(receivers) ? receivers : [principal] }
+
+      it 'sends a mail to the added user' do
+        expect(ActionMailer::Base.deliveries.size)
+          .to eql expected_receivers.length
+
+        expect(ActionMailer::Base.deliveries.map(&:to).flatten)
+          .to match_array expected_receivers.map(&:mail)
+      end
+    end
+
     context 'for a user' do
       it_behaves_like 'successful member creation'
+      it_behaves_like 'sends mails'
     end
 
     context 'for a group' do
       it_behaves_like 'successful member creation' do
-        let(:group) { FactoryBot.create(:group) }
+        let(:group) do
+          FactoryBot.create(:group).tap do |group|
+            users.each do |user|
+              GroupUser.create(group_id: group.id, user_id: user.id)
+              #group.add_members! users
+            end
+          end
+        end
         let(:principal) { group }
+        let(:users) { [FactoryBot.create(:user), FactoryBot.create(:user)] }
+        let(:receivers) { users }
         let(:principal_path) { api_v3_paths.group(group.id) }
         let(:body) do
           {
@@ -496,6 +520,7 @@ describe 'API v3 memberships resource', type: :request, content_type: :json do
         let(:current_user) { admin }
 
         it_behaves_like 'successful member creation'
+        it_behaves_like 'sends mails'
       end
 
       context 'as a non admin' do
